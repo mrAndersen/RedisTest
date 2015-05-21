@@ -8,11 +8,11 @@ class DataReceiver {
     const INTERNAL_KEY_PERIOD_MAP_PREFIX = "map";
     const INTERNAL_KEY_LAST_UPDATE_PREFIX = "map_updates";
 
-
     /** @var $client Predis\Client */
     private $client = null;
     private $keyPeriodMap = [];
     private $keyLastUpdates = [];
+    private $keyData = [];
 
     //Возьмем из parameters.yml конечно же, но поскольку у нас тут нету симфони, объявим тут
     private $redisConfig = [
@@ -26,12 +26,20 @@ class DataReceiver {
         $this->client = !$this->client ?  new Predis\Client($this->redisConfig) : $this->client;
     }
 
+    /**
+     * @param $key
+     * @return mixed
+     */
     private function getKeyLastUse($key)
     {
         $this->getInternalData();
         return $this->keyLastUpdates[$key];
     }
 
+    /**
+     * @param $key
+     * @return bool
+     */
     private function setKeyLastUse($key)
     {
         $this->getInternalData();
@@ -70,53 +78,47 @@ class DataReceiver {
         }
     }
 
+
     /**
      * @param $key
-     * @param $period
+     * @param $value
+     * @param $timeoutPeriod
      * @return bool
-     * @throws Exception
      */
-    public function setInterval($key,$period)
+    public function set($key, $value, $timeoutPeriod)
     {
         $this->getInternalData();
+        $this->client->set($key,$value);
 
-        if($this->client->exists($key)){
-            $this->keyPeriodMap[$key] = $period;
-            $this->keyLastUpdates[$key] = 0;
+        $this->keyData[$key] = $value;
+        $this->keyPeriodMap[$key] = $timeoutPeriod;
+        $this->keyLastUpdates[$key] = 0;
 
-            return $this->setInternalData();
-        }else{
-            throw new Exception('No key found');
-        }
-
+        return $this->setInternalData();
     }
 
     /**
      * @param $key
-     * @return string
+     * @return mixed
      * @throws Exception
      */
     public function get($key)
     {
-        $this->getInternalData();
-
-        if(in_array($key,array_keys($this->keyLastUpdates))){
-            //Значит у нас есть ограничение на ключ
+        if($this->client->exists($key)){
             $minInterval    = $this->keyPeriodMap[$key];
             $lastUsed       = $this->getKeyLastUse($key);
             $current        = microtime(true);
 
             if($current - $lastUsed > $minInterval){
-                //Отдаем ключ и ставим флаг о том что его юзнули
+                $this->keyData[$key] = $this->client->get($key);
                 $this->setKeyLastUse($key);
-                return $this->client->get($key);
-            }else{
-                return 'Too many requests';
             }
+
+            return $this->keyData[$key];
         }else{
-            //Значит ограничения нету, отдаем как есть
-            return $this->client->get($key);
+            throw new Exception('No key found');
         }
+
     }
 
     public function getClient()
